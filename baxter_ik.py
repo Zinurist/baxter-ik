@@ -171,12 +171,24 @@ def create_pointing_loss(goal_position, limb):
         M = forward_matrix(joints, limb+'_gripper')
         position = np.array([M[0,3], M[1,3], M[2,3]])
         zaxis = np.array([0,0,1,1])
+        #direction that the gripper is pointing at
         pointing_direction = np.matmul(M, zaxis)
         goal_direction = goal_position-position
         angle_deviation = angle_between(pointing_direction[:3], goal_direction)
-        distance_deviation = np.linalg.norm(goal_direction)
-        return angle_deviation+distance_deviation
+        #gripper should hold some distance from the goal pose, so that it doesn't touch the goal
+        distance_deviation = np.abs( np.linalg.norm(goal_direction) - 0.17 )
+        return angle_deviation*angle_deviation+distance_deviation
     return pointing_loss
+
+def create_position_loss(goal_position, limb):
+    """Creates a loss that tries to get the gripper as close as possible to the goal position.
+    """
+    def position_loss(joints):
+        M = forward_matrix(joints, limb+'_gripper')
+        position = np.array([M[0,3], M[1,3], M[2,3]])
+        goal_direction = goal_position-position
+        return np.linalg.norm(goal_direction)
+    return position_loss
 
 def baxter_ik(loss_func, x0=np.zeros(7), verbose=False):
     """Uses scipy optimization to minimize a given loss function.
