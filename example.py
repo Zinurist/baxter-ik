@@ -6,5 +6,5 @@ from baxter_ik import *
 
 object_position = np.array([1.294, -0.063, 0.003])
 joints = baxter_ik(create_pointing_loss(object_position, limb='right'))
-joints_dict = convert_joints_to_dict(joints)
+joints_dict = convert_joints_to_dict(joints, 'right')
 print('To point at object at position %s, move joints to positions %s.' % (object_position, joints_dict))

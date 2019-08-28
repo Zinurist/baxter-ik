@@ -8,24 +8,38 @@ and the matrices for the forward kinematics are extracted from the urdf descript
 
 import numpy as np
 from scipy.optimize import minimize
+
+# Replace this import with your own transformations.py if you want.
 from transformations import *
 
 
 def convert_joints_to_array(joints):
     """Converts the joints dict used by the baxter sdk to a numpy array used for this IK algorithm.
     """
-    return np.array([joints['right_s0'], joints['right_s1'],
-                     joints['right_e0'], joints['right_e1'],
-                     joints['right_w0'], joints['right_w1'],
-                     joints['right_w2']])
+    if 'right_s0' in joints:
+        return np.array([joints['right_s0'], joints['right_s1'],
+                         joints['right_e0'], joints['right_e1'],
+                         joints['right_w0'], joints['right_w1'],
+                         joints['right_w2']])
+    else:
+        return np.array([joints['left_s0'], joints['left_s1'],
+                         joints['left_e0'], joints['left_e1'],
+                         joints['left_w0'], joints['left_w1'],
+                         joints['left_w2']])
     
-def convert_joints_to_dict(joints):
+def convert_joints_to_dict(joints, limb):
     """Converts a joints numpy array to a joints dict as used by the baxter sdk.
     """
-    return {'right_s0': joints[0], 'right_s1': joints[1], 
-            'right_w0': joints[4], 'right_w1': joints[5], 
-            'right_w2': joints[6], 'right_e0': joints[2], 
-            'right_e1': joints[3]}
+    if limb == 'right':
+        return {'right_s0': joints[0], 'right_s1': joints[1], 
+                'right_w0': joints[4], 'right_w1': joints[5], 
+                'right_w2': joints[6], 'right_e0': joints[2], 
+                'right_e1': joints[3]}
+    else:
+        return {'left_s0': joints[0], 'left_s1': joints[1], 
+                'left_w0': joints[4], 'left_w1': joints[5], 
+                'left_w2': joints[6], 'left_e0': joints[2], 
+                'left_e1': joints[3]}
 
 
 def get_joint_bounds():
@@ -58,67 +72,94 @@ def forward_matrix(joints, goal_frame='right_wrist'):
         * right_upper_forearm
         * right_lower_forearm
         * right_wrist
-        * TODO
+        * right_hand
+        * right_gripper_base
+        * right_gripper (this frame might slightly differ from yours, check the last transformation to this frame)
         * ... or any of the above with 'right' replaced by 'left'
+    Note that the function doesn't check this value for correctness.
+        
+    If you need other frames, it shouldn't be too difficult to extend this function.
+    Just look for the joints in the urdf, add their origin using compose_matrix,
+    and the joint itsself using rotation/translation_matrix (for revolute/prismatic joints respectively).
+    You can take a look at the s1 joint for an example, and compare values with the corresponding joint in the urdf.
     """
     zaxis = np.array([0,0,1])
     M = np.identity(4)
     
-    #torso to right_arm_mount
-    c = compose_matrix(angles=[0, 0, -0.7854], translate=[0.024645, -0.219645, 0.118588])
-    M = np.matmul(M, c)
-    if goal_frame == 'right_arm_mount': return M
+    if goal_frame.startswith('right_'):
+        #torso to right_arm_mount
+        c = compose_matrix(angles=[0, 0, -0.7854], translate=[0.024645, -0.219645, 0.118588])
+        M = np.matmul(M, c)
+        if goal_frame == 'right_arm_mount': return M
+    else:
+        #torso to left_arm_mount
+        c = compose_matrix(angles=[0, 0, 0.7854], translate=[0.024645, 0.219645, 0.118588])
+        M = np.matmul(M, c)
+        if goal_frame == 'left_arm_mount': return M
+        
+    # Luckily, only the first frame is different between the left and right arm!
+    # All following transformations are designed to be the same for both sides.
     
-    #right_arm_mount to right_upper_shoulder, s0 joint
+    #{side}_arm_mount to {side}_upper_shoulder, s0 joint
     c = compose_matrix(angles=[0, 0, 0], translate=[0.055695, 0, 0.011038])
     r = rotation_matrix(joints[0], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_upper_shoulder': return M
+    if goal_frame.endswith('_upper_shoulder'): return M
     
-    #right_upper_shoulder to right_lower_shoulder, s1 joint
+    #{side}_upper_shoulder to {side}_lower_shoulder, s1 joint
     c = compose_matrix(angles=[-1.57079632679, 0, 0], translate=[0.069, 0, 0.27035])
     r = rotation_matrix(joints[1], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_lower_shoulder': return M
+    if goal_frame.endswith('_lower_shoulder'): return M
     
-    #right_lower_shoulder to right_upper_elbow, e0 joint
+    #{side}_lower_shoulder to {side}_upper_elbow, e0 joint
     c = compose_matrix(angles=[1.57079632679, 0, 1.57079632679], translate=[0.102, 0, 0])
     r = rotation_matrix(joints[2], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_upper_elbow': return M
+    if goal_frame.endswith('_upper_elbow'): return M
     
-    #right_upper_elbow to right_lower_elbow, e1 joint
+    #{side}_upper_elbow to {side}_lower_elbow, e1 joint
     c = compose_matrix(angles=[-1.57079632679, -1.57079632679, 0], translate=[0.069, 0, 0.26242])
     r = rotation_matrix(joints[3], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_lower_elbow': return M
+    if goal_frame.endswith('_lower_elbow'): return M
     
-    #right_lower_elbow to right_upper_forearm, w0 joint
+    #{side}_lower_elbow to {side}_upper_forearm, w0 joint
     c = compose_matrix(angles=[1.57079632679, 0, 1.57079632679], translate=[0.10359, 0, 0])
     r = rotation_matrix(joints[4], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_upper_forearm': return M
+    if goal_frame.endswith('_upper_forearm'): return M
     
-    #right_upper_forearm to right_lower_forearm, w1 joint
+    #{side}_upper_forearm to {side}_lower_forearm, w1 joint
     c = compose_matrix(angles=[-1.57079632679, -1.57079632679, 0], translate=[0.01, 0, 0.2707])
     r = rotation_matrix(joints[5], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_lower_forearm': return M
+    if goal_frame.endswith('_lower_forearm'): return M
     
-    #right_lower_forearm to right_wrist, w2 joint
+    #{side}_lower_forearm to {side}_wrist, w2 joint
     c = compose_matrix(angles=[1.57079632679, 0, 1.57079632679], translate=[0.115975, 0, 0])
     r = rotation_matrix(joints[6], zaxis)
     M = np.matmul(np.matmul(M, c), r)
-    if goal_frame == 'right_wrist': return M
+    if goal_frame.endswith('_wrist'): return M
     
-    #rest to gripper
-    #c = compose_matrix(angles=[], translate=[])
-    #r = rotation_matrix(j[], zaxis)
-    #M = np.matmul(np.matmul(M, c), r)
+    #{side}_wrist to {side}_hand
+    c = compose_matrix(angles=[0, 0, 0], translate=[0, 0, 0.11355])
+    M = np.matmul(np.matmul(M, c), r)
+    if goal_frame.endswith('_hand'): return M
+    
+    #{side}_hand to {side}_gripper_base
+    c = compose_matrix(angles=[0, 0, 0], translate=[0, 0, 0.025])
+    M = np.matmul(np.matmul(M, c), r)
+    if goal_frame.endswith('_gripper_base'): return M
+    
+    #{side}_gripper_base to {side}_gripper
+    c = compose_matrix(angles=[0, 0, 0], translate=[0, 0, 0.1327])
+    M = np.matmul(np.matmul(M, c), r)
+    if goal_frame.endswith('_gripper'): return M
     
     return M
 
-def create_pointing_loss(goal_position, limb='right'):
+def create_pointing_loss(goal_position, limb):
     """Creates a loss that results in the goal pose pointing at a given position.
     The result from IK should give a pose, where the robot is pointing at the goal position using the given limb's gripper,
     event if this position is out of reach.
