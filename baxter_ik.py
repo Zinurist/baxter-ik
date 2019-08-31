@@ -159,25 +159,49 @@ def forward_matrix(joints, goal_frame='right_wrist'):
     
     return M
 
-def create_pointing_loss(goal_position, limb):
+def create_pointing_loss(goal_position, limb, start_joints=None, fix_joints=np.array([False]*7)):
     """Creates a loss that results in the goal pose pointing at a given position.
     The result from IK should give a pose, where the robot is pointing at the goal position using the given limb's gripper,
     event if this position is out of reach.
+    
+    If the start_joints are provided, the loss includes a distance measure to those, so thath the goal pose tries to stay close to the starting position.
+    The fix_joints array can be used to fix some of the joints to the values provided in start_joints (if provided). It's a boolean array, one value for each joints deciding if the joint is fixed (True) or not (False).
+    For the baxter robot, fixing joints e0 and w0 is recommended (joints with index 2 and 4, see the example in example.py).
     
     This serves an example of how to use this file, and also happens to be the main reason it was created.
     Refer to this if you want to make your own custom loss function.
     """
     def pointing_loss(joints):
+        if start_joints is not None: joints[fix_joints] = start_joints[fix_joints]
         M = forward_matrix(joints, limb+'_gripper')
         position = np.array([M[0,3], M[1,3], M[2,3]])
         zaxis = np.array([0,0,1,1])
         #direction that the gripper is pointing at
         pointing_direction = np.matmul(M, zaxis)
         goal_direction = goal_position-position
+        
         angle_deviation = angle_between(pointing_direction[:3], goal_direction)
+        angle_deviation = angle_deviation/np.pi+10
+        angle_loss = angle_deviation
+        
         #gripper should hold some distance from the goal pose, so that it doesn't touch the goal
         distance_deviation = np.abs( np.linalg.norm(goal_direction) - 0.17 )
-        return angle_deviation*angle_deviation+distance_deviation
+        distance_deviation = distance_deviation+1
+        distance_loss = distance_deviation
+        
+        #point downwards, TODO: decide if upwards/downwards depending on goal_position
+        direction_loss = pointing_direction[2]
+        
+        #could be replaced with proper energy calculations
+        if start_joints is None:
+            energy_loss = 0
+        else:
+            weights =  np.array([0., 0., 10., 1., 10., 0., 1.])
+            energy_loss = np.abs(joints-start_joints) 
+            energy_loss = energy_loss * weights
+            energy_loss = np.sum(energy_loss) / (7*np.pi + np.sum(weights))
+            
+        return 100*angle_loss + 10*distance_loss + 10*direction_loss + energy_loss
     return pointing_loss
 
 def create_position_loss(goal_position, limb):
@@ -190,17 +214,15 @@ def create_position_loss(goal_position, limb):
         return np.linalg.norm(goal_direction)
     return position_loss
 
-def baxter_ik(loss_func, x0=np.zeros(7), verbose=False):
+def baxter_ik(loss_func, x0=np.zeros(7)):
     """Uses scipy optimization to minimize a given loss function.
     The minimization starts with the joint values x0. For exmaple, these can be set to the current joint values of the robot,
     but the minimization will mostly work fine when setting them to just 0.
-    Set verbose to true to print some minimization info.
     
     Example usage:
         >>> goal_position = np.array([1.294, -0.063, 0.003])
         >>> joints = baxter_ik(create_pointing_loss(goal_position))
     """
     res = minimize(loss_func, x0, bounds=get_joint_bounds())
-    if verbose: print(res)
-    return res.x
+    return res
     
